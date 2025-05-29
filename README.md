@@ -43,7 +43,7 @@ To generate a 2-bit I/Q sample file (emulating a general GNSS RF frontend output
 
 This format can be fed directly into PocketSDR-AFS for offline receiver testing.
 
-### Notes
+## Notes
 
 - For development and testing purposes, the default center frequency of the simulator is set to 1575.42MHz. Although the actual LANS AFS is broadcast in the S-band, this configuration allows the use of readily available L-band frontend devices (such as FE2CH) for real-time testing with PocketSDR-AFS.
 - To configure the simulator for the actual S-band transmission frequency of LANS AFS, open the `afs_sim.c` file and comment out the `#define DEMO_L1` directive. This change switches the center frequency to the S-band, matching the authentic LANS AFS broadcast.
