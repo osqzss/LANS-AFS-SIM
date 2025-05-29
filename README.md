@@ -45,4 +45,5 @@ This format can be fed directly into PocketSDR-AFS for offline receiver testing.
 
 ### Notes
 
-- For testing purposes, the center frequency of the baseband signal is set to 1575.42MHz. Although the actual LANS AFS is broadcast in S-band, this configuration allows the use of an L-band frontend device (such as FE2CH) for real-time testing with PocketSDR-AFS.
+- For development and testing purposes, the default center frequency of the simulator is set to 1575.42MHz. Although the actual LANS AFS is broadcast in the S-band, this configuration allows the use of readily available L-band frontend devices (such as FE2CH) for real-time testing with PocketSDR-AFS.
+- To configure the simulator for the actual S-band transmission frequency of LANS AFS, open the `afs_sim.c` file and comment out the `#define DEMO_L1` directive. This change switches the center frequency to the S-band, matching the authentic LANS AFS broadcast.
