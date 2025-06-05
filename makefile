@@ -22,4 +22,4 @@ $(TARGET):$(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET).exe
+	rm -f $(OBJS) $(TARGET) *.exe
