@@ -4,7 +4,7 @@ SRCS = afs_sim.c afs_nav.c afs_rand.c ./ldpc/alloc.c ./ldpc/mod2sparse.c ./rtkli
 OBJS = $(SRCS:.c=.o)
 
 INCLUDE = -I./ldpc -I./rtklib -I./pocketsdr
-OPTIONS = -fopenmp
+OPTIONS = -fopenmp -lm
 
 WARNOPT = -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
 
@@ -16,7 +16,7 @@ all: $(TARGET)
 
 # Linker rule with -fopenmp option
 $(TARGET):$(OBJS)
-	$(CC) $(OPTIONS) $(OBJS) -o $(TARGET)
+	$(CC) $(OBJS) $(OPTIONS) -o $(TARGET)
 
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@
