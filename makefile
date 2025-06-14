@@ -14,7 +14,8 @@ TARGET = afs_sim
 
 all: $(TARGET)
 
-# Linker rule with -fopenmp option
+# In GCC, the order of arguments matters, especially for linking libraries.
+# The '-l' option must be placed *after* the source files or object files.
 $(TARGET):$(OBJS)
 	$(CC) $(OBJS) $(OPTIONS) -o $(TARGET)
 
