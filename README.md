@@ -2,7 +2,7 @@
 
 LANS-AFS-SIM is a baseband waveform generator for the Lunar Augmented Navigation Service (LANS), developed to support future algorithm research and testing of LANS Augmented Forward Signal (AFS) receivers. The generated baseband signal can be processed directly by a software-defined receiver or converted to RF using an SDR platform, such as bladeRF or LimeSDR.
 
-LANS is the lunar equivalent of GNSS, designed for future lunar explorations. The AFS is a standardized signal structure for LANS, with its recommended standard available at NASA's [LunaNet Interoperability Specification](https://www.nasa.gov/directorates/somd/space-communications-navigation-program/lunanet-interoperability-specification/) site.
+LANS is the lunar equivalent of GNSS, designed for future lunar explorations. The AFS is a standardized signal structure for LANS, with its recommended standard available at NASA's [LunaNet Interoperability Specification](https://www.nasa.gov/directorates/somd/space-communications-navigation-program/lunanet-interoperability-specification/) site. The AFS is transmitted by multiple LunaNet Service Provider (LNSP) nodes, including NASA's Lunar Communications Relay and Navigation Systems (LCRNS) and JAXA's Luna Navigation Satellite System (LNSS).
 
 Together with a software-defined LANS AFS receiver, such as [PocketSDR-AFS](https://github.com/osqzss/PocketSDR-AFS), LANS-AFS-SIM provides a valuable platform for validating signal processing algorithms and assessing navigation performance.
 
