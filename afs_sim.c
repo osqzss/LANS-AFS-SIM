@@ -4,6 +4,10 @@
 #include <time.h>
 #include <string.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 #include "afs_nav.h"
 #include "afs_rand.h"
 
@@ -928,7 +932,7 @@ void bitncpy(uint8_t *syms1, const uint8_t *syms2, int n)
 
 void printUsage(void)
 {
-    printf("Usage: afs_sim [-t tsec] [-s freq] [-e feph] [-b bits] [-l lat:lon:hgt] fout\n");
+    fprintf(stderr, "Usage: afs_sim [-t tsec] [-s freq] [-e feph] [-b bits] [-l lat:lon:hgt] fout | -\n");
 
     exit(0);
 }
@@ -937,7 +941,8 @@ int main(int argc, char** argv)
 {
     FILE *fp;
     const char *fout = "", *feph="";
-    double tsec = 1.0, freq = 12.0e6;
+    double tsec = 300.0;
+    double freq = 12.0e6;
     int nbits = 16;
     double llh[3] = { 0.0, 0.0, -(R_MOON + 1.0e3) };
     double xyz[3];
@@ -1012,8 +1017,8 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "-InQ")) {
             inv_q = 1; // Set inverse Q sign flag for MAX2771
         }
-        //else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-        else if (argv[i][0] == '-') {
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+        //else if (argv[i][0] == '-') {
             printUsage();
         }
         else {
@@ -1025,12 +1030,12 @@ int main(int argc, char** argv)
         fprintf(stderr, "ERROR: Specify output file.\n");
         exit(-1);
     }
-
+    
     if (!readTertiary("008_Weil1500hex210prns.txt")) {
-		printf("ERROR: Failed to read tertiary code file.\n");
+		fprintf(stderr, "ERROR: Failed to read tertiary code file.\n");
 		exit(-1);
 	}
-
+    
     // Set user location
 
     if (llh[2] < -(R_MOON)) {
@@ -1042,8 +1047,8 @@ int main(int argc, char** argv)
 
     llh2xyz(llh, xyz);
 
-    printf("xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
-    printf("llh = %11.6f, %11.6f, %11.1f\n", llh[0] * R2D, llh[1] * R2D, llh[2]);
+    fprintf(stderr, "xyz = %11.1f, %11.1f, %11.1f\n", xyz[0], xyz[1], xyz[2]);
+    fprintf(stderr, "llh = %11.6f, %11.6f, %11.1f\n", llh[0] * R2D, llh[1] * R2D, llh[2]);
 
     // Read ephemeris
 
@@ -1077,12 +1082,12 @@ int main(int argc, char** argv)
     }
 
     gpst2date(&g0, &t0);
-    printf("Start time = %4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n", t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, g0.week, g0.sec);
+    fprintf(stderr, "Start time = %4d/%02d/%02d,%02d:%02d:%02.0f (%d:%.0f)\n", t0.y, t0.m, t0.d, t0.hh, t0.mm, t0.sec, g0.week, g0.sec);
 
     afstime_t afst;
     gpst2afst(&g0, &afst);
 
-    printf("AFS time: WN = %d, ITOW = %d, TOI = %d, fsec = %.1f\n", afst.wn, afst.itow, afst.toi, afst.fsec);
+    fprintf(stderr, "AFS time: WN = %d, ITOW = %d, TOI = %d, fsec = %.1f\n", afst.wn, afst.itow, afst.toi, afst.fsec);
 
     // Check visible satellites
 
@@ -1111,7 +1116,7 @@ int main(int argc, char** argv)
         }
     }
 
-    printf("Number of channels = %d\n", nsat);
+    fprintf(stderr, "Number of channels = %d\n", nsat);
 
     // Baseband signal buffer and output file
 
@@ -1134,7 +1139,13 @@ int main(int argc, char** argv)
         exit(1);
     }
     
-    if (NULL == (fp = fopen(fout, "wb"))) { // Open output file
+    if (fout[0] == '-') {
+        fp = stdout;
+#ifdef _WIN32
+        int retval = _setmode(_fileno(stdout), _O_BINARY); // Set stdout to binary mode
+#endif
+    }
+    else if (NULL == (fp = fopen(fout, "wb"))) { // Open output file
         fprintf(stderr, "ERROR: Failed to open output file.\n");
         exit(1);
     }
@@ -1172,12 +1183,12 @@ int main(int argc, char** argv)
     }
 
     // Initial pseudorange
-    printf("SV    AZ    EL     RANGE     DOPP\n");
+    fprintf(stderr, "SV    AZ    EL     RANGE     DOPP\n");
     for (i = 0; i < nsat; i++) {
         sv = chan[i].prn - 1;
         computeRange(&rho0[sv], eph[sv], grx, xyz);
 
-        printf("%02d %6.1f %5.1f %10.1f %+8.1f\n", chan[i].prn, 
+        fprintf(stderr, "%02d %6.1f %5.1f %10.1f %+8.1f\n", chan[i].prn, 
             chan[i].azel[0] * R2D, chan[i].azel[1] * R2D, rho0[sv].range, -rho0[sv].rate/LAMBDA);
     }
 
@@ -1237,10 +1248,10 @@ int main(int argc, char** argv)
 
     tstart = clock();
 
-    printf("Generating baseband signals...\n");
+    fprintf(stderr, "Generating baseband signals...\n");
 
-    printf("\rTime = %4.1f", grx.sec - g0.sec);
-    fflush(stdout);
+    fprintf(stderr, "\rTime = %4.1f", grx.sec - g0.sec);
+    fflush(stderr);
 
     // Update receiver time
     grx.sec += 0.1;
@@ -1398,13 +1409,13 @@ int main(int argc, char** argv)
         grx.sec += 0.1;
 
         // Update time counter
-        printf("\rTime = %4.1f", grx.sec - g0.sec);
-        fflush(stdout);
+        fprintf(stderr, "\rTime = %4.1f", grx.sec - g0.sec);
+        fflush(stderr);
     }
 
     tend = clock();
 
-    printf("\nDone!\n");
+    fprintf(stderr, "\nDone!\n");
 
     // Free I/Q buffers
     free(iq_buff);
@@ -1413,10 +1424,11 @@ int main(int argc, char** argv)
     }
         
     // Close output file
-    fclose(fp);
+    if (fp != stdout)
+        fclose(fp);
 
     // Process time
-    printf("Process time = %.1f[sec]\n", (double)(tend - tstart) / CLOCKS_PER_SEC);
+    fprintf(stderr, "Process time = %.1f[sec]\n", (double)(tend - tstart) / CLOCKS_PER_SEC);
 
 	return 0;
 }
