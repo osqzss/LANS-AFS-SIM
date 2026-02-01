@@ -1,0 +1,7 @@
+set frequency tx 2492.028M
+set frequency rx 1575.42M
+set samplerate 12M
+set bandwidth 12M
+set gain tx 0
+tx config file=afssim.bin format=bin
+tx start
