@@ -5,7 +5,7 @@ AFS signals can be transmitted with LimeSDR without generating a large I/Q data 
 An example command is shown below:
 
 ```bash
-afs_sim -t 90 - 2>nul | limeplayer -
+afs_sim -t 90 - 2>/dev/null | limeplayer -
 ```
 
-Here, `-` is used as an option to select `stdout` or `stdin` instead of a file. The `2>nul` option redirects stderr to the null device to suppress console messages from `afs_sim` during streaming.
+Here, `-` is used as an option to select `stdout` or `stdin` instead of a file. The `2>/dev/null` option redirects stderr to the null device to suppress console messages from `afs_sim` during streaming.
