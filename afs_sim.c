@@ -50,6 +50,9 @@
 
 #define GAIN_SCALE (128)
 
+// Reference sampling frequency where the current C/N0 is calibrated
+#define FS_REF 12.0e6
+
 int scode[4][4] = {{1,1,1,0},{0,1,1,1},{1,0,1,1},{1,1,0,1}};
 int tcode[210][1500];
 
@@ -986,6 +989,8 @@ int main(int argc, char** argv)
     int gain;
     int noise_scale;
 
+    double fs_scale;
+
     int inv_q = 0; // Inverse Q sign flag
 
     for (i = 1; i < argc; i++) {
@@ -994,6 +999,8 @@ int main(int argc, char** argv)
         }
         else if (!strcmp(argv[i], "-s") && i + 1 < argc) {
             freq = atof(argv[++i]);
+            if (freq < 1.0e6)
+                freq *= 1.0e6;
         }
         else if (!strcmp(argv[i], "-e") && i + 1 < argc) {
             feph = argv[++i];
@@ -1258,11 +1265,14 @@ int main(int argc, char** argv)
 
     nsim = (int)((tsec - 0.1) * 10.0); // 10Hz update rate
 
+    // Scale the per-sample noise amplitude to keep C/N0 constant across sampling rates.
+    fs_scale = sqrt(freq / FS_REF);
+
     // 2-bit ADC threshold
-    thresh = (int)(1250.0 * sqrt((double)nsat)); // 1-sigma value of thermal noise
+    thresh = (int)(1250.0 * sqrt((double)nsat) * fs_scale); // 1-sigma value of thermal noise
 
     // Noise amplitude scale
-    noise_scale = (int)(1250.0 / 1449.0 * sqrt((double)nsat) * GAIN_SCALE); 
+    noise_scale = (int)(1250.0 / 1449.0 * sqrt((double)nsat) * GAIN_SCALE * fs_scale); 
 
     // Seed the gaussian noise generator
     srandn(time(NULL));
