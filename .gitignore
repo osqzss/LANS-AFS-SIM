@@ -1,0 +1,9 @@
+*.o
+*.so
+*.a
+*.bin
+*.exe
+./ldpc/
+./pocketsdr/
+./rtklib/
+afs_sim
