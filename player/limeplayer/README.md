@@ -8,4 +8,4 @@ An example command is shown below:
 afs_sim -t 90 - 2>nul | limeplayer -
 ```
 
-Here, `-` is used as an option to select `stdout` or `stdin` instead of a file. The `2>nul` option redirects stderr to the null device so that only the I/Q sample data is output from the `stdout` of `afs_sim`.
+Here, `-` is used as an option to select `stdout` or `stdin` instead of a file. The `2>nul` option redirects stderr to the null device to suppress console messages from `afs_sim` during streaming.
