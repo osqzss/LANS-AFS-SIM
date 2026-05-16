@@ -10,24 +10,14 @@
 #endif
 #include "afs_nav.h"
 #include "afs_rand.h"
+#include "multipath/multipath.h"
 
-#define DEMO_L1
-
-#ifdef DEMO_L1
-#define LAMBDA (0.190293672798365)
-#define CARR_FREQ (1575.42e6) // = 1.023MHz * 1540.0 = 5.115MHz * 308.0
-#define I_CODE_FREQ (1.023e6) // BPSK(1)
-#define CARR_TO_I_CODE (1.0/1540.0)
-#define Q_CODE_FREQ (5.115e6) // BPSK(5)
-#define CARR_TO_Q_CODE (1.0/308.0)
-#else
 #define LAMBDA (0.120300597746093)
 #define CARR_FREQ (2492.028e6) // = 1.023MHz * 2436.0 = 5.115MHz * 487.2
 #define I_CODE_FREQ (1.023e6) // BPSK(1)
 #define CARR_TO_I_CODE (1.0/2436.0)
 #define Q_CODE_FREQ (5.115e6) // BPSK(5)
 #define CARR_TO_Q_CODE (1.0/487.2)
-#endif
 
 #define MAX_CHAR (512)
 #define MAX_SAT (12)
@@ -220,6 +210,26 @@ typedef struct
     double range;
     double rate;
 } range_t;
+
+typedef struct
+{
+    int enabled;             // 1 = reflection channel active
+    double range_offset;     // Additional path length [m]
+    double amplitude_ratio;  // Amplitude ratio [0, 1]
+    double delta_I_chips;    // Chip offset for I-code
+    double delta_Q_chips;    // Chip offset for Q-code
+} rf_chan_t;
+
+typedef struct
+{
+    int    enabled;          // 1 = diffracted ray active
+    double elevation_mask;   // Elevation mask [rad]
+    double range_offset;     // Additional path length [m]
+    double amplitude_ratio;  // Amplitude ratio [0, 1]
+    double delta_I_chips;    // Chip offset for I-code
+    double delta_Q_chips;    // Chip offset for Q-code
+    int    in_diffraction;   // 1 = in diffraction regime
+} df_chan_t;
 
 int hex2bin(char hex, int* bin)
 {
@@ -935,8 +945,8 @@ void bitncpy(uint8_t *syms1, const uint8_t *syms2, int n)
 
 void printUsage(void)
 {
-    fprintf(stderr, "Usage: afs_sim [-t tsec] [-s freq] [-e feph] [-b bits] [-l lat:lon:hgt] fout | -\n");
-
+    fprintf(stderr, "Usage: afs_sim [-t tsec] [-s freq] [-e feph] [-b bits] [-l lat:lon:hgt]\n");
+    fprintf(stderr, "               [-reflection] [-diffraction] [-log logfile] fout | -\n");
     exit(0);
 }
 
@@ -966,7 +976,6 @@ int main(int argc, char** argv)
     double neu[3];
     double azel[2];
     double elvmask = 0.0 / R2D;
-
     int iq_buff_size;
     double delt;
     void* iq_buff = NULL;
@@ -992,6 +1001,27 @@ int main(int argc, char** argv)
     double fs_scale;
 
     int inv_q = 0; // Inverse Q sign flag
+
+    reflection_t  refl;
+    diffraction_t diff;
+
+    int opt_reflection  = 0;   // -reflection  : enable reflected signal
+    int opt_diffraction = 0;   // -diffraction : enable diffracted path
+
+    rf_chan_t rf_chan[MAX_SAT];
+    df_chan_t df_chan[MAX_SAT];
+    memset(rf_chan, 0, sizeof(rf_chan));
+    memset(df_chan, 0, sizeof(df_chan));
+
+    int mp_gain;
+    int ip_mp, qp_mp;
+
+    double sat_pos_mf[3];
+
+    multipath_t refl_err, diff_err;
+
+    FILE  *flog = NULL;          // Log file handle
+    const char *flog_name = "";  // Log file name from -log option
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-t") && i + 1 < argc) {
@@ -1024,6 +1054,15 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "-InQ")) {
             inv_q = 1; // Set inverse Q sign flag for MAX2771
         }
+        else if (!strcmp(argv[i], "-reflection")) {
+            opt_reflection = 1;
+        }
+        else if (!strcmp(argv[i], "-diffraction")) {
+            opt_diffraction = 1;
+        }
+        else if (!strcmp(argv[i], "-log") && i + 1 < argc) {
+            flog_name = argv[++i];
+        }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
         //else if (argv[i][0] == '-') {
             printUsage();
@@ -1035,6 +1074,7 @@ int main(int argc, char** argv)
 
     if (!*fout) {
         fprintf(stderr, "ERROR: Specify output file.\n");
+        printUsage();
         exit(-1);
     }
     
@@ -1047,9 +1087,9 @@ int main(int argc, char** argv)
 
     if (llh[2] < -(R_MOON)) {
         // Default user location; Shackleton crater
-        llh[0] = -89.66 / R2D;
-        llh[1] = 129.20 / R2D;
-        llh[2] = 100.0;
+        llh[0] = -89.67 / R2D;
+        llh[1] = 129.78 / R2D;
+        llh[2] = -2786.0;
     }
 
     llh2xyz(llh, xyz);
@@ -1124,6 +1164,57 @@ int main(int argc, char** argv)
     }
 
     fprintf(stderr, "Number of channels = %d\n", nsat);
+
+    // Initialize multipath structures
+    refl.lambda           = LAMBDA;
+    refl.antenna_height   = REFL_ANTENNA_HEIGHT;
+    refl.eps_r_real       = REFL_EPS_R_REAL;
+    refl.eps_r_imag       = REFL_EPS_R_IMAG;
+    refl.surface_rms      = REFL_SURFACE_RMS;
+    refl.ant_gain_scale   = REFL_ANT_GAIN_SCALE;
+
+    diff.lambda           = LAMBDA;
+    diff.mask_elev        = DIFF_MASK_ELEV_RAD;
+    diff.edge_distance    = DIFF_EDGE_DISTANCE;
+
+    // Initialise per-channel state
+    for (i = 0; i < nsat; i++) {
+        rf_chan[i].enabled        = opt_reflection;
+        rf_chan[i].range_offset   = 0.0;
+        rf_chan[i].amplitude_ratio = 0.0;
+        rf_chan[i].delta_I_chips  = 0.0;
+        rf_chan[i].delta_Q_chips  = 0.0;
+
+        df_chan[i].enabled        = opt_diffraction;
+        df_chan[i].elevation_mask = diff.mask_elev;
+        df_chan[i].range_offset   = 0.0;
+        df_chan[i].amplitude_ratio = 0.0;
+        df_chan[i].delta_I_chips  = 0.0;
+        df_chan[i].delta_Q_chips  = 0.0;
+
+        if (chan[i].azel[1] < 0.0)
+            df_chan[i].in_diffraction = -1; // below horizon
+        else if (chan[i].azel[1] < diff.mask_elev)
+            df_chan[i].in_diffraction =  1; // below elevation mask (diffraction path)
+        else
+            df_chan[i].in_diffraction =  0; // above elevation mask (direct path)
+    }
+
+    fprintf(stderr, "Reflection model : %s\n", opt_reflection  ? "ENABLED"  : "DISABLED");
+    if (opt_reflection) {
+        fprintf(stderr, "  lambda         = %.6f m\n",  refl.lambda);
+        fprintf(stderr, "  antenna_height = %.2f m\n",  refl.antenna_height);
+        fprintf(stderr, "  eps_r          = %.4f - j%.4f\n", refl.eps_r_real, fabs(refl.eps_r_imag));
+        fprintf(stderr, "  surface_rms    = %.4f m\n",  refl.surface_rms);
+        fprintf(stderr, "  ant_gain_scale = %.4f\n",    refl.ant_gain_scale);
+    }
+
+    fprintf(stderr, "Diffraction model: %s\n", opt_diffraction ? "ENABLED"  : "DISABLED");
+    fprintf(stderr, "  mask_elev     = %.1f deg\n", diff.mask_elev * R2D);
+    if (opt_diffraction) {
+        fprintf(stderr, "  lambda        = %.6f m\n", diff.lambda);
+        fprintf(stderr, "  edge_distance = %.0f m\n",  diff.edge_distance);
+    }
 
     // Baseband signal buffer and output file
 
@@ -1269,16 +1360,28 @@ int main(int argc, char** argv)
     fs_scale = sqrt(freq / FS_REF);
 
     // 2-bit ADC threshold
-    thresh = (int)(1250.0 * sqrt((double)nsat) * fs_scale); // 1-sigma value of thermal noise
+    thresh = (int)(1250.0 * sqrt((double)nsat) * fs_scale); //1-sigma value of thermal noise
 
-    // Noise amplitude scale
-    noise_scale = (int)(1250.0 / 1449.0 * sqrt((double)nsat) * GAIN_SCALE * fs_scale); 
+    // Noise amplitude scale (nominal C/N0 = 45dBHz)
+    int npath = nsat;
+    if (opt_reflection) npath *= 2; // add reflection paths
+    noise_scale = (int)(1250.0 / 2898.0 * sqrt((double)npath) * GAIN_SCALE * fs_scale);
 
     // Seed the gaussian noise generator
     srandn(time(NULL));
 
+    // Open log file
+    if (*flog_name) {
+        flog = fopen(flog_name, "w");
+        if (!flog) {
+            fprintf(stderr, "ERROR: Cannot open log file: %s\n", flog_name);
+            exit(-1);
+        }
+        // CSV header
+        fprintf(flog, "elapsed_sec,PRN,refl_range_offset,refl_amp_ratio,diff_range_offset,diff_amp_ratio\n");
+    }
+
     for (isim = 0; isim < nsim; isim++) {
-        #pragma omp parallel for private(sv, rho, path_loss, gain, I, Q, ip, qp, isamp)
         for (i = 0; i < nsat; i++) {
 
             // Refresh code phase and data bit counters
@@ -1293,6 +1396,89 @@ int main(int argc, char** argv)
             // Save current pseudorange
             rho0[sv] = rho;
 
+            // Update satellite position and elevation
+            {
+                double vel_tmp[3], clk_tmp[2];
+                double los_tmp[3], neu_tmp[3], azel_tmp[2];
+
+                satpos(eph[sv], grx, sat_pos_mf, vel_tmp, clk_tmp);
+                subVect(los_tmp, sat_pos_mf, xyz);
+                xyz2neu(los_tmp, tmat, neu_tmp);
+                neu2azel(azel_tmp, neu_tmp);
+                chan[i].azel[0] = azel_tmp[0];
+                chan[i].azel[1] = azel_tmp[1];
+            }
+
+            // Compute diffraction error 
+            diff_err = diffraction_error(xyz, sat_pos_mf, &diff);
+
+            // Determine diffraction regime and parameters
+            {
+                int prev = df_chan[i].in_diffraction;
+
+                int curr;
+                if (chan[i].azel[1] < 0.0)
+                    curr = -1;              // below horizon
+                else if (diff_err.valid)
+                    curr =  1;              // in diffraction regime
+                else
+                    curr =  0;              // direct path only
+
+                df_chan[i].in_diffraction = curr;
+
+                // Transition events
+                if (prev != -1 && curr != -1 && curr != prev) {
+                    double elapsed = grx.sec - g0.sec;
+                    if (prev - curr > 0) {
+                        // in_diffraction: 1 -> 0
+                        fprintf(stderr,"\n[T=%7.1f s] PRN %2d: DIFFRACTION -> DIRECT (el = %.2f deg)\n",
+                            elapsed, chan[i].prn, chan[i].azel[1] * R2D);
+                    } else {
+                        // in_diffraction: 0 -> 1
+                        fprintf(stderr, "\n[T=%7.1f s] PRN %2d: DIRECT -> DIFFRACTION (el = %.2f deg)\n",
+                            elapsed, chan[i].prn, chan[i].azel[1] * R2D);
+                    }
+                }
+
+                if (curr == 1 && df_chan[i].enabled) {
+                    // Update per-channel diffraction parameters
+                    df_chan[i].range_offset    = diff_err.range_offset;
+                    df_chan[i].amplitude_ratio = diff_err.amplitude_ratio;
+                    df_chan[i].delta_I_chips   = diff_err.range_offset * I_CODE_FREQ / SPEED_OF_LIGHT;
+                    df_chan[i].delta_Q_chips   = diff_err.range_offset * Q_CODE_FREQ / SPEED_OF_LIGHT;
+                    // Fixed range offset and ampulitude ratio for demonstration purposes only
+                    /*
+                    df_chan[i].range_offset    = 1.5;
+                    df_chan[i].amplitude_ratio = 0.3;
+                    df_chan[i].delta_I_chips   = 1.5 * I_CODE_FREQ / SPEED_OF_LIGHT;
+                    df_chan[i].delta_Q_chips   = 1.5 * Q_CODE_FREQ / SPEED_OF_LIGHT;
+                    */
+                }
+            }
+
+            // Compute reflection error and parameters
+            if (rf_chan[i].enabled && df_chan[i].in_diffraction == 0) {
+
+                refl_err = reflection_error(xyz, sat_pos_mf, &refl);
+                
+                if (refl_err.valid) {
+                    rf_chan[i].range_offset    = refl_err.range_offset;
+                    rf_chan[i].amplitude_ratio = refl_err.amplitude_ratio;
+                    rf_chan[i].delta_I_chips   = refl_err.range_offset * I_CODE_FREQ / SPEED_OF_LIGHT;
+                    rf_chan[i].delta_Q_chips   = refl_err.range_offset * Q_CODE_FREQ / SPEED_OF_LIGHT;
+                }
+                else {
+                    rf_chan[i].amplitude_ratio = 0.0;
+                    refl_err.range_offset = 0.0;
+                    refl_err.amplitude_ratio = 0.0;
+                }
+            }
+            else {
+                refl_err.range_offset = 0.0;
+                refl_err.amplitude_ratio = 0.0;
+                refl_err.valid = 0;
+            }
+
             // Path loss
             path_loss = 5200000.0 / rho.range;
 
@@ -1303,14 +1489,66 @@ int main(int argc, char** argv)
 
                 ph = (int)floor(chan[i].carr_phase * 512.0);
 
-                I = chan[i].I.C * chan[i].I.D;
-                Q = chan[i].Q.C * chan[i].Q.S * chan[i].Q.T;
+                // Signal generation 
 
-                ip = gain * (I * cosT[ph] - Q * sinT[ph]);
-                qp = gain * (I * sinT[ph] + Q * cosT[ph]);
+                if (df_chan[i].in_diffraction == -1) {
+                    // below horizon — no I/Q output
+                    ip = 0;
+                    qp = 0;
+                }
+                else if (df_chan[i].in_diffraction == 1) { // in diffraction regime
+                    if (df_chan[i].enabled) {
+                        // Generate  diffracted signal
+                        int I_chip_df = (int)(chan[i].I.code_phase + df_chan[i].delta_I_chips) % 2046;
+                        int Q_chip_df = (int)(chan[i].Q.code_phase + df_chan[i].delta_Q_chips) % 10230;
 
-                if (inv_q == 1 && nbits == 2)
-                    qp *= -1; // Inverse Q sign to emulate MAX2771 outputs
+                        int I_df = chan[i].I.code[I_chip_df] * chan[i].I.D;
+                        int Q_df = chan[i].Q.code[Q_chip_df] * chan[i].Q.S * chan[i].Q.T;
+
+                        int df_gain = (int)(gain * df_chan[i].amplitude_ratio);
+
+                        ip = df_gain * (I_df * cosT[ph] - Q_df * sinT[ph]);
+                        qp = df_gain * (I_df * sinT[ph] + Q_df * cosT[ph]);
+
+                        if (inv_q == 1 && nbits == 2)
+                            qp *= -1;
+                    }
+                    else {
+                        ip = 0;
+                        qp = 0;
+                    }
+                }
+                else {
+                    // Generate direct signal
+                    I = chan[i].I.C * chan[i].I.D;
+                    Q = chan[i].Q.C * chan[i].Q.S * chan[i].Q.T;
+
+                    ip = gain * (I * cosT[ph] - Q * sinT[ph]);
+                    qp = gain * (I * sinT[ph] + Q * cosT[ph]);
+
+                    if (inv_q == 1 && nbits == 2)
+                        qp *= -1; /* Inverse Q sign to emulate MAX2771 outputs */
+
+                    // Generate reflected signal 
+                    if (rf_chan[i].enabled && rf_chan[i].amplitude_ratio > 0.0) {
+                        int I_chip_mp = (int)(chan[i].I.code_phase + rf_chan[i].delta_I_chips) % 2046;
+                        int Q_chip_mp = (int)(chan[i].Q.code_phase + rf_chan[i].delta_Q_chips) % 10230;
+
+                        int I_mp = chan[i].I.code[I_chip_mp] * chan[i].I.D;
+                        int Q_mp = chan[i].Q.code[Q_chip_mp] * chan[i].Q.S * chan[i].Q.T;
+
+                        mp_gain = (int)(gain * rf_chan[i].amplitude_ratio);
+
+                        ip_mp = mp_gain * (I_mp * cosT[ph] - Q_mp * sinT[ph]);
+                        qp_mp = mp_gain * (I_mp * sinT[ph] + Q_mp * cosT[ph]);
+
+                        if (inv_q == 1 && nbits == 2)
+                            qp_mp *= -1;
+
+                        ip += ip_mp;
+                        qp += qp_mp;
+                    }
+                }
 
                 // Store I/Q samples into buffer
                 chan[i].iq_buff[isamp * 2] = ip;
@@ -1361,10 +1599,25 @@ int main(int argc, char** argv)
                 else if (chan[i].carr_phase < 0.0)
                     chan[i].carr_phase += 1.0;
             }
+
+            // Write multipath errors into the log file
+            if (flog) {
+                double elapsed = grx.sec - g0.sec;
+
+                double r_range = opt_reflection  ? refl_err.range_offset    : 0.0;
+                double r_amp   = opt_reflection  ? refl_err.amplitude_ratio : 0.0;
+
+                double d_range = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.range_offset    : 0.0;
+                double d_amp   = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.amplitude_ratio : 0.0;
+
+                fprintf(flog, "%.1f,%d,%.6f,%.6f,%.6f,%.6f\n", elapsed, chan[i].prn, r_range, r_amp, d_range, d_amp);
+            }
         }
 
+        if (flog)
+            fflush(flog); // Flush log file
+
         if (nbits == 2) {
-            #pragma omp parallel for private(i, sample, twobitADC)
             for (isamp = 0; isamp < 2 * iq_buff_size; isamp++)
             {
                 sample = 0;
@@ -1385,7 +1638,6 @@ int main(int argc, char** argv)
             fwrite(iq_buff, 1, 2 * iq_buff_size, fp);
         }
         else {
-            #pragma omp parallel for private(i, sample)
             for (isamp = 0; isamp < 2 * iq_buff_size; isamp++)
             {
                 sample = 0;
@@ -1436,6 +1688,10 @@ int main(int argc, char** argv)
     // Close output file
     if (fp != stdout)
         fclose(fp);
+
+    // Close log file
+    if (flog)
+        fclose(flog);
 
     // Process time
     fprintf(stderr, "Process time = %.1f[sec]\n", (double)(tend - tstart) / CLOCKS_PER_SEC);
