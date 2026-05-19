@@ -215,7 +215,9 @@ typedef struct
 {
     int enabled;             // 1 = reflection channel active
     double range_offset;     // Additional path length [m]
-    double amplitude_ratio;  // Amplitude ratio [0, 1]
+    double amplitude_ratio;  // Magnitude of complex amplitude ratio [0, 1]
+    double amp_re;           // Real part of complex amplitude ratio
+    double amp_im;           // Imaginary part of complex amplitude ratio
     double delta_I_chips;    // Chip offset for I-code
     double delta_Q_chips;    // Chip offset for Q-code
 } rf_chan_t;
@@ -225,11 +227,27 @@ typedef struct
     int    enabled;          // 1 = diffracted ray active
     double elevation_mask;   // Elevation mask [rad]
     double range_offset;     // Additional path length [m]
-    double amplitude_ratio;  // Amplitude ratio [0, 1]
+    double amplitude_ratio;  // Magnitude of complex amplitude ratio [0, 1]
+    double amp_re;           // Real part of complex amplitude ratio
+    double amp_im;           // Imaginary part of complex amplitude ratio
     double delta_I_chips;    // Chip offset for I-code
     double delta_Q_chips;    // Chip offset for Q-code
     int    in_diffraction;   // 1 = in diffraction regime
 } df_chan_t;
+
+static void multiply_complex_amp(int i_in, int q_in, double amp_re, double amp_im,
+    int *i_out, int *q_out)
+{
+    double i_tmp;
+    double q_tmp;
+
+    // Complex multiplication
+    i_tmp = amp_re * (double)i_in - amp_im * (double)q_in;
+    q_tmp = amp_im * (double)i_in + amp_re * (double)q_in;
+
+    *i_out = (int)lrint(i_tmp);
+    *q_out = (int)lrint(q_tmp);
+}
 
 int hex2bin(char hex, int* bin)
 {
@@ -1013,7 +1031,6 @@ int main(int argc, char** argv)
     memset(rf_chan, 0, sizeof(rf_chan));
     memset(df_chan, 0, sizeof(df_chan));
 
-    int mp_gain;
     int ip_mp, qp_mp;
 
     double sat_pos_mf[3];
@@ -1182,6 +1199,8 @@ int main(int argc, char** argv)
         rf_chan[i].enabled        = opt_reflection;
         rf_chan[i].range_offset   = 0.0;
         rf_chan[i].amplitude_ratio = 0.0;
+        rf_chan[i].amp_re         = 0.0;
+        rf_chan[i].amp_im         = 0.0;
         rf_chan[i].delta_I_chips  = 0.0;
         rf_chan[i].delta_Q_chips  = 0.0;
 
@@ -1189,6 +1208,8 @@ int main(int argc, char** argv)
         df_chan[i].elevation_mask = diff.mask_elev;
         df_chan[i].range_offset   = 0.0;
         df_chan[i].amplitude_ratio = 0.0;
+        df_chan[i].amp_re         = 0.0;
+        df_chan[i].amp_im         = 0.0;
         df_chan[i].delta_I_chips  = 0.0;
         df_chan[i].delta_Q_chips  = 0.0;
 
@@ -1378,7 +1399,7 @@ int main(int argc, char** argv)
             exit(-1);
         }
         // CSV header
-        fprintf(flog, "elapsed_sec,PRN,refl_range_offset,refl_amp_ratio,diff_range_offset,diff_amp_ratio\n");
+        fprintf(flog, "elapsed_sec,PRN,refl_range_offset,refl_amp_ratio,refl_amp_re,refl_amp_im,diff_range_offset,diff_amp_ratio,diff_amp_re,diff_amp_im\n");
     }
 
     for (isim = 0; isim < nsim; isim++) {
@@ -1444,12 +1465,16 @@ int main(int argc, char** argv)
                     // Update per-channel diffraction parameters
                     df_chan[i].range_offset    = diff_err.range_offset;
                     df_chan[i].amplitude_ratio = diff_err.amplitude_ratio;
+                    df_chan[i].amp_re          = diff_err.amp_re;
+                    df_chan[i].amp_im          = diff_err.amp_im;
                     df_chan[i].delta_I_chips   = diff_err.range_offset * I_CODE_FREQ / SPEED_OF_LIGHT;
                     df_chan[i].delta_Q_chips   = diff_err.range_offset * Q_CODE_FREQ / SPEED_OF_LIGHT;
                     // Fixed range offset and ampulitude ratio for demonstration purposes only
                     /*
                     df_chan[i].range_offset    = 1.5;
                     df_chan[i].amplitude_ratio = 0.3;
+                    df_chan[i].amp_re          = 0.3;
+                    df_chan[i].amp_im          = 0.0;
                     df_chan[i].delta_I_chips   = 1.5 * I_CODE_FREQ / SPEED_OF_LIGHT;
                     df_chan[i].delta_Q_chips   = 1.5 * Q_CODE_FREQ / SPEED_OF_LIGHT;
                     */
@@ -1464,18 +1489,26 @@ int main(int argc, char** argv)
                 if (refl_err.valid) {
                     rf_chan[i].range_offset    = refl_err.range_offset;
                     rf_chan[i].amplitude_ratio = refl_err.amplitude_ratio;
+                    rf_chan[i].amp_re          = refl_err.amp_re;
+                    rf_chan[i].amp_im          = refl_err.amp_im;
                     rf_chan[i].delta_I_chips   = refl_err.range_offset * I_CODE_FREQ / SPEED_OF_LIGHT;
                     rf_chan[i].delta_Q_chips   = refl_err.range_offset * Q_CODE_FREQ / SPEED_OF_LIGHT;
                 }
                 else {
                     rf_chan[i].amplitude_ratio = 0.0;
+                    rf_chan[i].amp_re = 0.0;
+                    rf_chan[i].amp_im = 0.0;
                     refl_err.range_offset = 0.0;
                     refl_err.amplitude_ratio = 0.0;
+                    refl_err.amp_re = 0.0;
+                    refl_err.amp_im = 0.0;
                 }
             }
             else {
                 refl_err.range_offset = 0.0;
                 refl_err.amplitude_ratio = 0.0;
+                refl_err.amp_re = 0.0;
+                refl_err.amp_im = 0.0;
                 refl_err.valid = 0;
             }
 
@@ -1505,10 +1538,10 @@ int main(int argc, char** argv)
                         int I_df = chan[i].I.code[I_chip_df] * chan[i].I.D;
                         int Q_df = chan[i].Q.code[Q_chip_df] * chan[i].Q.S * chan[i].Q.T;
 
-                        int df_gain = (int)(gain * df_chan[i].amplitude_ratio);
+                        int ip_df0 = gain * (I_df * cosT[ph] - Q_df * sinT[ph]);
+                        int qp_df0 = gain * (I_df * sinT[ph] + Q_df * cosT[ph]);
 
-                        ip = df_gain * (I_df * cosT[ph] - Q_df * sinT[ph]);
-                        qp = df_gain * (I_df * sinT[ph] + Q_df * cosT[ph]);
+                        multiply_complex_amp(ip_df0, qp_df0, df_chan[i].amp_re, df_chan[i].amp_im, &ip, &qp);
 
                         if (inv_q == 1 && nbits == 2)
                             qp *= -1;
@@ -1527,7 +1560,7 @@ int main(int argc, char** argv)
                     qp = gain * (I * sinT[ph] + Q * cosT[ph]);
 
                     if (inv_q == 1 && nbits == 2)
-                        qp *= -1; /* Inverse Q sign to emulate MAX2771 outputs */
+                        qp *= -1; // Inverse Q sign to emulate MAX2771 outputs
 
                     // Generate reflected signal 
                     if (rf_chan[i].enabled && rf_chan[i].amplitude_ratio > 0.0) {
@@ -1537,10 +1570,10 @@ int main(int argc, char** argv)
                         int I_mp = chan[i].I.code[I_chip_mp] * chan[i].I.D;
                         int Q_mp = chan[i].Q.code[Q_chip_mp] * chan[i].Q.S * chan[i].Q.T;
 
-                        mp_gain = (int)(gain * rf_chan[i].amplitude_ratio);
+                        int ip_mp0 = gain * (I_mp * cosT[ph] - Q_mp * sinT[ph]);
+                        int qp_mp0 = gain * (I_mp * sinT[ph] + Q_mp * cosT[ph]);
 
-                        ip_mp = mp_gain * (I_mp * cosT[ph] - Q_mp * sinT[ph]);
-                        qp_mp = mp_gain * (I_mp * sinT[ph] + Q_mp * cosT[ph]);
+                        multiply_complex_amp(ip_mp0, qp_mp0, rf_chan[i].amp_re, rf_chan[i].amp_im, &ip_mp, &qp_mp);
 
                         if (inv_q == 1 && nbits == 2)
                             qp_mp *= -1;
@@ -1606,11 +1639,16 @@ int main(int argc, char** argv)
 
                 double r_range = opt_reflection  ? refl_err.range_offset    : 0.0;
                 double r_amp   = opt_reflection  ? refl_err.amplitude_ratio : 0.0;
+                double r_re    = opt_reflection  ? refl_err.amp_re          : 0.0;
+                double r_im    = opt_reflection  ? refl_err.amp_im          : 0.0;
 
                 double d_range = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.range_offset    : 0.0;
                 double d_amp   = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.amplitude_ratio : 0.0;
+                double d_re    = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.amp_re          : 0.0;
+                double d_im    = (opt_diffraction && df_chan[i].in_diffraction == 1) ? diff_err.amp_im          : 0.0;
 
-                fprintf(flog, "%.1f,%d,%.6f,%.6f,%.6f,%.6f\n", elapsed, chan[i].prn, r_range, r_amp, d_range, d_amp);
+                fprintf(flog, "%.1f,%d,%.6f,%.6f,%.9f,%.9f,%.6f,%.6f,%.9f,%.9f\n",
+                    elapsed, chan[i].prn, r_range, r_amp, r_re, r_im, d_range, d_amp, d_re, d_im);
             }
         }
 
@@ -1664,7 +1702,7 @@ int main(int argc, char** argv)
                 bitncpy(chan[i].I.data[0] + 68, AFS_SB1, 52);
             }
 
-            //printf("\nUpdate Data Frames: TOI = %d\n", afst.toi);
+            //fprintf(stderr, "\nUpdate Data Frames: TOI = %d\n", afst.toi);
         }
 
         // Update receiver time

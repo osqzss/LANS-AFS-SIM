@@ -122,7 +122,7 @@ static int el_az(const double rx_pos[3], const double sat_pos[3],  double *elev,
     return 1;
 }
 
-static double fresnel_reflection(double elev, double complex eps_r, int pol)
+static double complex fresnel_reflection(double elev, double complex eps_r)
 {
     double sin_e = sin(elev);
     double cos_e = cos(elev);
@@ -142,19 +142,7 @@ static double fresnel_reflection(double elev, double complex eps_r, int pol)
     gamma_h = (sin_e - root) / (sin_e + root);
     gamma_v = (eps_r * sin_e - root) / (eps_r * sin_e + root);
 
-    if (pol == 1) {
-        return cabs(gamma_h);
-    }
-    else if (pol == 2) {
-        return cabs(gamma_v);
-    }
-    else {
-        double gh = cabs(gamma_h);
-        double gv = cabs(gamma_v);
-
-        // Average in power, then convert back to amplitude.
-        return sqrt(0.5 * (gh * gh + gv * gv));
-    }
+    return 0.5 * (gamma_v + gamma_h);
 }
 
 static double roughness_attenuation(double elev, double lambda, double sigma)
@@ -174,19 +162,47 @@ static double roughness_attenuation(double elev, double lambda, double sigma)
     return exp(-0.5 * x * x);
 }
 
+static double complex path_phase_rotation(double excess_path, double lambda)
+{
+    double phase;
+
+    if (lambda <= 0.0) {
+        return 1.0 + 0.0 * I;
+    }
+
+    // Propagation delay relative to the direct path
+    phase = -2.0 * M_PI * excess_path / lambda;
+
+    return cos(phase) + I * sin(phase);
+}
+
+static double complex limit_complex_magnitude(double complex z)
+{
+    double mag = cabs(z);
+
+    if (mag <= 1.0 || mag < ERR_EPS) {
+        return z;
+    }
+
+    return z / mag;
+}
+
 multipath_t reflection_error(const double rx_pos[3], const double sat_pos[3], const reflection_t *refl)
 {
     multipath_t mp;
     double elev, az;
     double los[3];
-    double gamma_mag;
     double rough_loss;
-    double amp;
 
     double complex eps_r;
+    double complex gamma_cp;
+    double complex phase_delay;
+    double complex amp_c;
 
     mp.range_offset = 0.0;
     mp.amplitude_ratio = 0.0;
+    mp.amp_re = 0.0;
+    mp.amp_im = 0.0;
     mp.valid = 0;
 
     if (refl == 0) {
@@ -208,12 +224,23 @@ multipath_t reflection_error(const double rx_pos[3], const double sat_pos[3], co
     mp.range_offset = 2.0 * refl->antenna_height * sin(elev);
 
     eps_r = refl->eps_r_real - I * refl->eps_r_imag;
-    gamma_mag = fresnel_reflection(elev, eps_r, 0);
+
+    // Complex Fresnel reflection coefficient
+    gamma_cp = fresnel_reflection(elev, eps_r);
+
+    // Real-valued roughness attenuation
     rough_loss = roughness_attenuation(elev, refl->lambda, refl->surface_rms);
 
-    amp = gamma_mag * rough_loss * refl->ant_gain_scale;
+    // Carrier phase rotation caused by the excess propagation path
+    phase_delay = path_phase_rotation(mp.range_offset, refl->lambda);
 
-    mp.amplitude_ratio = clamp(amp);
+    // Total complex amplitude ratio relative to the direct path
+    amp_c = gamma_cp * rough_loss * refl->ant_gain_scale * phase_delay;
+    amp_c = limit_complex_magnitude(amp_c);
+
+    mp.amplitude_ratio = cabs(amp_c);
+    mp.amp_re = creal(amp_c);
+    mp.amp_im = cimag(amp_c);
     mp.valid = 1;
 
     return mp;
@@ -299,8 +326,13 @@ multipath_t diffraction_error(const double rx_pos[3], const double sat_pos[3], c
     double v;
     double amp;
 
+    double complex phase_delay;
+    double complex amp_c;
+
     mp.range_offset = 0.0;
     mp.amplitude_ratio = 0.0;
+    mp.amp_re = 0.0;
+    mp.amp_im = 0.0;
     mp.valid = 0;
 
     if (diff == 0) {
@@ -360,8 +392,17 @@ multipath_t diffraction_error(const double rx_pos[3], const double sat_pos[3], c
 
     amp = knife_edge_amp_scale(v);
 
+    // Carrier phase rotation caused by the excess propagation path
+    phase_delay = path_phase_rotation(excess, diff->lambda);
+
+    // Total complex amplitude ratio relative to the direct path
+    amp_c = amp * phase_delay;
+    amp_c = limit_complex_magnitude(amp_c);
+
     mp.range_offset = excess;
-    mp.amplitude_ratio = clamp(amp);
+    mp.amplitude_ratio = cabs(amp_c);
+    mp.amp_re = creal(amp_c);
+    mp.amp_im = cimag(amp_c);
     mp.valid = 1;
 
     return mp;

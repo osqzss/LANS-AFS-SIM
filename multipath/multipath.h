@@ -1,8 +1,6 @@
 #ifndef MULTIPATH_H
 #define MULTIPATH_H
 
-//#include <complex.h>
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -30,8 +28,10 @@
 #define DIFF_EDGE_DISTANCE          10000.0
 
 typedef struct {
-    double range_offset;
-    double amplitude_ratio;
+    double range_offset;     // Excess path length relative to the direct path [m]
+    double amplitude_ratio;  // Magnitude of the complex amplitude ratio
+    double amp_re;           // Real part of the complex amplitude ratio
+    double amp_im;           // Imaginary part of the complex amplitude ratio
     int    valid;
 } multipath_t;
 
