@@ -142,7 +142,7 @@ static double complex fresnel_reflection(double elev, double complex eps_r)
     gamma_h = (sin_e - root) / (sin_e + root);
     gamma_v = (eps_r * sin_e - root) / (eps_r * sin_e + root);
 
-    return 0.5 * (gamma_v + gamma_h);
+    return 0.5 * (gamma_v - gamma_h);
 }
 
 static double roughness_attenuation(double elev, double lambda, double sigma)
